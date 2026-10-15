@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>千里江山 · 烟花 — 手势互动画卷</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #0a1a20;
+    overflow: hidden;
+    font-family: "Noto Serif SC", "Songti SC", "SimSun", serif;
+  }
+  #stage {
+    position: relative;
+    width: min(100vw, calc(100vh * 16 / 9));
+    height: min(calc(100vw * 9 / 16), 100vh);
+    margin: auto;
+    top: 50%;
+    transform: translateY(-50%);
+    box-shadow: 0 0 80px rgba(0,0,0,0.6);
+    background: #16323f;
+    overflow: hidden;
+  }
+  #game { display: block; width: 100%; height: 100%; }
+
+  /* 竖排标题 */
+  #title-vert {
+    position: absolute;
+    top: 34px; right: 30px;
+    writing-mode: vertical-rl;
+    font-size: 26px;
+    letter-spacing: 12px;
+    color: rgba(232, 205, 148, 0.85);
+    text-shadow: 0 0 14px rgba(255, 200, 100, 0.35);
+    pointer-events: none;
+    user-select: none;
+  }
+  #title-sub {
+    position: absolute;
+    top: 36px; right: 74px;
+    writing-mode: vertical-rl;
+    font-size: 13px;
+    letter-spacing: 7px;
+    color: rgba(232, 205, 148, 0.5);
+    pointer-events: none;
+  }
+
+  /* HUD */
+  #hud {
+    position: absolute;
+    top: 22px; left: 28px;
+    color: #f3e3bb;
+    font-size: 16px;
+    line-height: 1.9;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.65);
+    pointer-events: none;
+    user-select: none;
+  }
+  #hud .big { font-size: 24px; letter-spacing: 2px; }
+  #hud-pose { color: #9fd8c8; font-size: 14px; }
+
+  /* 摄像头预览 */
+  #cam {
+    position: absolute;
+    right: 22px; bottom: 22px;
+    width: 176px; height: 132px;
+    object-fit: cover;
+    transform: scaleX(-1);
+    border-radius: 10px;
+    border: 1px solid rgba(232, 205, 148, 0.4);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    opacity: 0.85;
+    display: none;
+  }
+
+  /* 通用按钮 */
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    border: 1px solid rgba(232, 205, 148, 0.55);
+    background: rgba(20, 46, 52, 0.75);
+    color: #f3e3bb;
+    padding: 13px 34px;
+    font-size: 17px;
+    letter-spacing: 3px;
+    border-radius: 4px;
+    transition: all .25s;
+    backdrop-filter: blur(4px);
+  }
+  button:hover { background: rgba(47, 106, 91, 0.8); color: #fff2d8; border-color: #ffcf6e; }
+  button.primary { border-color: #ffcf6e; color: #ffe9b8; }
+
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 18px;
+    background: radial-gradient(ellipse at center, rgba(10, 26, 32, 0.62) 0%, rgba(6, 16, 20, 0.88) 100%);
+    color: #f3e3bb;
+    text-align: center;
+    z-index: 10;
+  }
+  .overlay h1 {
+    font-size: 46px;
+    letter-spacing: 14px;
+    font-weight: 600;
+    color: #ffe9b8;
+    text-shadow: 0 0 30px rgba(255, 200, 100, 0.4);
+  }
+  .overlay .sub { font-size: 17px; letter-spacing: 6px; color: #9fd8c8; }
+  .overlay .desc { font-size: 14px; color: rgba(243, 227, 187, 0.75); max-width: 520px; line-height: 2; }
+  .overlay .btns { display: flex; gap: 20px; margin-top: 10px; }
+  .overlay .tips { font-size: 12.5px; color: rgba(243, 227, 187, 0.5); letter-spacing: 1px; line-height: 2; }
+  .hidden { display: none !important; }
+
+  #end-stats { font-size: 20px; letter-spacing: 4px; line-height: 2.2; }
+  #end-stats b { color: #ffcf6e; font-size: 30px; }
+
+  #toast {
+    position: absolute;
+    left: 50%; top: 18%;
+    transform: translateX(-50%);
+    background: rgba(12, 30, 36, 0.9);
+    border: 1px solid rgba(232, 205, 148, 0.45);
+    color: #f3e3bb;
+    padding: 10px 26px;
+    border-radius: 6px;
+    font-size: 15px;
+    letter-spacing: 2px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .4s;
+    z-index: 20;
+  }
+  #corner-btns {
+    position: absolute;
+    left: 22px; bottom: 22px;
+    display: flex; gap: 10px;
+    z-index: 15;
+  }
+  #corner-btns button { padding: 6px 14px; font-size: 13px; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game" width="1280" height="720"></canvas>
+
+  <div id="title-vert">千里江山 · 烟花</div>
+  <div id="title-sub">手势互动画卷</div>
+
+  <div id="hud">
+    <div class="big">得分 <span id="hud-score">0</span></div>
+    <div>点亮 <span id="hud-nodes">0/12</span> 处江山</div>
+    <div id="hud-pose">手势：—</div>
+  </div>
+
+  <video id="cam" playsinline muted></video>
+
+  <div id="corner-btns">
+    <button id="btn-sound" title="快捷键 M">音效：开</button>
+    <button id="btn-camtoggle" title="快捷键 C" style="display:none">预览：开</button>
+  </div>
+
+  <div id="toast"></div>
+
+  <div id="menu" class="overlay">
+    <h1>千里江山 · 烟花</h1>
+    <div class="sub">挥手之间，点亮名画</div>
+    <div class="desc">
+      王希孟的青绿山水沉睡千年，画中城楼、渔舟与山巅正等待节庆之夜。<br>
+      伸出手，你的指尖即是火种——在江山之上，绽放牡丹与金菊。
+    </div>
+    <div class="btns">
+      <button id="btn-cam" class="primary">开启摄像头 · 手势模式</button>
+      <button id="btn-mouse">无摄像头 · 鼠标模式</button>
+    </div>
+    <div class="tips">
+      手势：伸出食指 = 单发烟花 ｜ 张开手掌 = 连放 ｜ 握拳蓄力再松开 = 齐放<br>
+      鼠标模式：移动 = 瞄准 ｜ 单击 = 单发 ｜ 按住 = 连放 ｜ 双击 / 空格 = 齐放
+    </div>
+  </div>
+
+  <div id="endscreen" class="overlay hidden">
+    <h1>江山已亮</h1>
+    <div class="sub">千里江山，为你重焕节庆之夜</div>
+    <div id="end-stats">
+      总得分 <b id="end-score">0</b><br>
+      用时 <span id="end-time">0:00</span>
+    </div>
+    <div class="btns">
+      <button id="btn-replay" class="primary">再来一局</button>
+      <button id="btn-menu">返回封面</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =========================================================
+   千里江山 · 烟花  —  手势控制名画烟花互动游戏
+   技术栈：MediaPipe Hands (CDN) + Canvas 2D + WebAudio
+   ========================================================= */
+
+// ---------- 基础常量与状态 ----------
+const W = 1280, H = 720;
+const SCROLL_W = 3840;                 // 长卷总宽（3 屏）
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const G = {
+  state: "menu",                       // menu | playing | finale | end
+  mode: null,                          // "cam" | "mouse"
+  score: 0,
+  scrollX: 0,
+  scrollSpeed: 26,
+  startTime: 0,
+  finaleT: 0,
+  finaleSpawn: 0,
+  soundOn: true
+};
+
+// ---------- 工具 ----------
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+
+// ---------- 节点（关卡数据，JSON 驱动） ----------
+const NODE_DEFS = [
+  { x: 520,  type: "peak",   need: 3 },
+  { x: 700,  type: "boat",   need: 2 },
+  { x: 900,  type: "pagoda", need: 3 },
+  { x: 1180, type: "peak",   need: 3 },
+  { x: 1500, type: "boat",   need: 2 },
+  { x: 1900, type: "peak",   need: 3 },
+  { x: 2250, type: "pagoda", need: 3 },
+  { x: 2600, type: "peak",   need: 3 },
+  { x: 2900, type: "boat",   need: 2 },
+  { x: 3050, type: "pagoda", need: 3 },
+  { x: 3300, type: "peak",   need: 3 },
+  { x: 3600, type: "boat",   need: 2 }
+];
+let nodes = [];
+
+// ---------- 山体曲线（程序化青绿山水） ----------
+function nearBase(x) {
+  return 600 + 52 * Math.sin(x * 0.0016 + 1.2) + 36 * Math.sin(x * 0.0037 + 0.4) + 22 * Math.sin(x * 0.0089 + 2.1);
+}
+function peakBump(x) {
+  let s = 0;
+  for (const d of NODE_DEFS) {
+    if (d.type !== "peak") continue;
+    const t = (x - d.x) / 150;
+    s += 170 * Math.exp(-t * t);
+  }
+  return s;
+}
+function getNearY(x) { return nearBase(x) - peakBump(x); }
+function getMidY(x)  { return 505 + 60 * Math.sin(x * 0.0021 + 0.7) + 34 * Math.sin(x * 0.0053 + 1.9); }
+function getFarY(x)  { return 425 + 42 * Math.sin(x * 0.0013 + 2.4) + 24 * Math.sin(x * 0.0044 + 0.2); }
+
+// ---------- 长卷预渲染（离屏 Canvas，只画一次） ----------
+const scrollCanvas = document.createElement("canvas");
+scrollCanvas.width = SCROLL_W; scrollCanvas.height = H;
+
+function paintScroll() {
+  const c = scrollCanvas.getContext("2d");
+  // 夜暮青绿的天空
+  let sky = c.createLinearGradient(0, 0, 0, 660);
+  sky.addColorStop(0, "#132c3a");
+  sky.addColorStop(0.45, "#1e4a4d");
+  sky.addColorStop(0.8, "#3a6b5e");
+  sky.addColorStop(1, "#8a7444");
+  c.fillStyle = sky;
+  c.fillRect(0, 0, SCROLL_W, H);
+
+  // 星子
+  for (let i = 0; i < 130; i++) {
+    const x = Math.random() * SCROLL_W, y = Math.random() * 300;
+    c.fillStyle = "rgba(255, 240, 200, " + rand(0.15, 0.7).toFixed(2) + ")";
+    c.fillRect(x, y, rand(1, 2.2), rand(1, 2.2));
+  }
+  // 一轮淡月
+  c.save();
+  c.globalAlpha = 0.85;
+  const moon = c.createRadialGradient(2900, 110, 6, 2900, 110, 90);
+  moon.addColorStop(0, "rgba(255,244,214,0.95)");
+  moon.addColorStop(0.25, "rgba(255,236,190,0.35)");
+  moon.addColorStop(1, "rgba(255,236,190,0)");
+  c.fillStyle = moon;
+  c.fillRect(2780, 0, 240, 240);
+  c.beginPath(); c.arc(2900, 110, 26, 0, 7);
+  c.fillStyle = "#f7ecd0"; c.fill();
+  c.restore();
+
+  // 远山（石青淡）
+  drawMountainLayer(c, getFarY, "#3f7d80", "#5d9c96", 0.35, 650);
+  mistBand(c, 430, 130);
+  // 中山（青绿）
+  drawMountainLayer(c, getMidY, "#35705f", "#57a98b", 0.55, 655);
+  mistBand(c, 505, 110);
+  // 近山（浓青绿 + 泥金描边 + 主峰）
+  drawMountainLayer(c, getNearY, "#28584c", "#6fc39a", 0.8, 662, true);
+
+  // 岸线（赭石）
+  c.fillStyle = "#6e5427";
+  c.fillRect(0, 640, SCROLL_W, 22);
+  c.fillStyle = "rgba(180, 140, 70, 0.5)";
+  c.fillRect(0, 640, SCROLL_W, 3);
+
+  // 江水
+  let water = c.createLinearGradient(0, 655, 0, H);
+  water.addColorStop(0, "#173c40");
+  water.addColorStop(1, "#0b2126");
+  c.fillStyle = water;
+  c.fillRect(0, 655, SCROLL_W, H - 655);
+  // 水面金波
+  c.strokeStyle = "rgba(212, 175, 105, 0.28)";
+  c.lineWidth = 1.4;
+  for (let i = 0; i < 220; i++) {
+    const x = Math.random() * SCROLL_W, y = rand(668, 710);
+    const len = rand(8, 34);
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x + len, y); c.stroke();
+  }
+
+  // 近山松影
+  for (let x = 60; x < SCROLL_W; x += rand(55, 130)) {
+    const y = getNearY(x) + rand(4, 18);
+    if (y > 640) continue;
+    drawPine(c, x, y, rand(10, 20));
+  }
+
+  // 节点静物：亭、城楼、渔舟
+  for (const n of nodes) {
+    if (n.type === "peak")   drawPavilion(c, n.x, getNearY(n.x) + 4);
+    if (n.type === "pagoda") drawPagoda(c, n.x, 652);
+    if (n.type === "boat")   drawBoat(c, n.x, 682);
+  }
+}
+
+function drawMountainLayer(c, fn, fill, ridge, mistAlpha, floorY, goldEdge) {
+  c.save();
+  c.beginPath();
+  c.moveTo(0, H);
+  for (let x = 0; x <= SCROLL_W; x += 6) c.lineTo(x, fn(x));
+  c.lineTo(SCROLL_W, floorY); c.lineTo(SCROLL_W, H); c.lineTo(0, H);
+  c.closePath();
+  c.fillStyle = fill;
+  c.globalAlpha = 1;
+  c.fill();
+  // 山脊亮边（石绿）
+  c.beginPath();
+  for (let x = 0; x <= SCROLL_W; x += 6) {
+    if (x === 0) c.moveTo(x, fn(x)); else c.lineTo(x, fn(x));
+  }
+  c.strokeStyle = ridge;
+  c.lineWidth = 2.4;
+  c.globalAlpha = 0.85;
+  c.stroke();
+  // 泥金描边（仅近山主峰）
+  if (goldEdge) {
+    c.strokeStyle = "rgba(230, 190, 110, 0.5)";
+    c.lineWidth = 1.2;
+    c.stroke();
+  }
+  c.restore();
+}
+
+function mistBand(c, y, h) {
+  const g = c.createLinearGradient(0, y - h * 0.4, 0, y + h * 0.6);
+  g.addColorStop(0, "rgba(225, 232, 220, 0)");
+  g.addColorStop(0.5, "rgba(225, 232, 220, 0.16)");
+  g.addColorStop(1, "rgba(225, 232, 220, 0)");
+  c.fillStyle = g;
+  c.fillRect(0, y - h * 0.4, SCROLL_W, h);
+}
+
+function drawPine(c, x, y, s) {
+  c.fillStyle = "rgba(16, 44, 38, 0.9)";
+  c.fillRect(x - 1, y - s, 2, s);
+  for (let i = 0; i < 3; i++) {
+    const w = s * (0.9 - i * 0.22), yy = y - s * (0.45 + i * 0.28);
+    c.beginPath();
+    c.moveTo(x - w, yy);
+    c.lineTo(x + w, yy);
+    c.lineTo(x, yy - s * 0.42);
+    c.closePath(); c.fill();
+  }
+}
+
+function drawPavilion(c, x, y) {
+  c.save();
+  c.fillStyle = "#1c332c";
+  c.strokeStyle = "rgba(230,190,110,0.75)";
+  c.lineWidth = 1.2;
+  // 台基
+  c.fillRect(x - 14, y - 4, 28, 4);
+  // 立柱
+  c.fillRect(x - 10, y - 20, 2.4, 16);
+  c.fillRect(x + 8, y - 20, 2.4, 16);
+  // 顶
+  c.beginPath();
+  c.moveTo(x - 15, y - 20); c.lineTo(x + 15, y - 20);
+  c.lineTo(x + 7, y - 27); c.lineTo(x - 7, y - 27);
+  c.closePath(); c.fill(); c.stroke();
+  c.beginPath();
+  c.moveTo(x - 9, y - 27); c.lineTo(x + 9, y - 27);
+  c.lineTo(x, y - 34);
+  c.closePath(); c.fill(); c.stroke();
+  c.restore();
+}
+
+function drawPagoda(c, x, baseY) {
+  c.save();
+  c.fillStyle = "#1e3a30";
+  c.strokeStyle = "rgba(230,190,110,0.8)";
+  c.lineWidth = 1.3;
+  const tiers = 3, w0 = 30, hT = 16;
+  let y = baseY;
+  c.fillRect(x - w0 / 2 - 4, y - 8, w0 + 8, 8); // 城台
+  y -= 8;
+  for (let i = 0; i < tiers; i++) {
+    const w = w0 - i * 7, ty = y - hT;
+    c.fillRect(x - w / 3, ty, w / 1.5, hT);          // 身
+    c.beginPath();                                    // 檐
+    c.moveTo(x - w / 2 - 4, ty);
+    c.lineTo(x + w / 2 + 4, ty);
+    c.lineTo(x + w / 4, ty - 7);
+    c.lineTo(x - w / 4, ty - 7);
+    c.closePath(); c.fill(); c.stroke();
+    y = ty - 7;
+  }
+  c.beginPath(); c.moveTo(x - 1.4, y); c.lineTo(x + 1.4, y); c.lineTo(x, y - 10); c.closePath(); c.fill();
+  c.restore();
+}
+
+function drawBoat(c, x, y) {
+  c.save();
+  c.fillStyle = "#14262a";
+  c.strokeStyle = "rgba(230,190,110,0.6)";
+  c.lineWidth = 1.2;
+  c.beginPath();
+  c.moveTo(x - 22, y); c.quadraticCurveTo(x, y + 10, x + 22, y);
+  c.lineTo(x + 16, y - 5); c.lineTo(x - 16, y - 5);
+  c.closePath(); c.fill(); c.stroke();
+  c.beginPath(); c.moveTo(x + 4, y - 5); c.lineTo(x + 4, y - 26); c.stroke(); // 桅
+  c.beginPath(); c.moveTo(x + 4, y - 26); c.lineTo(x + 18, y - 18); c.lineTo(x + 4, y - 14); c.closePath(); // 帆
+  c.fillStyle = "rgba(90, 70, 40, 0.9)"; c.fill();
+  c.restore();
+}
+
+// ---------- 光晕精灵（预渲染，性能关键） ----------
+const PALETTES = {
+  red:    "#ff5a4e",
+  gold:   "#ffcf6e",
+  teal:   "#6ee7d8",
+  white:  "#eaffff",
+  pink:   "#ff8fb1",
+  vermilion: "#ff3b30"
+};
+const SPRITES = {};
+function makeGlowSprite(color) {
+  const s = document.createElement("canvas");
+  s.width = s.height = 64;
+  const g = s.getContext("2d");
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.22, color);
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return s;
+}
+for (const k in PALETTES) SPRITES[k] = makeGlowSprite(PALETTES[k]);
+
+// ---------- 粒子池 ----------
+const MAX_PARTICLES = 1400;
+const particles = [];
+for (let i = 0; i < MAX_PARTICLES; i++) particles.push({ active: false });
+let pCursor = 0;
+function getParticle() {
+  for (let i = 0; i < MAX_PARTICLES; i++) {
+    pCursor = (pCursor + 1) % MAX_PARTICLES;
+    if (!particles[pCursor].active) return particles[pCursor];
+  }
+  return null;
+}
+
+function spawnParticle(o) {
+  const p = getParticle();
+  if (!p) return;
+  p.active = true;
+  p.x = o.x; p.y = o.y; p.px = o.x; p.py = o.y;
+  p.vx = o.vx || 0; p.vy = o.vy || 0;
+  p.grav = o.grav !== undefined ? o.grav : 0.045;
+  p.drag = o.drag !== undefined ? o.drag : 0.985;
+  p.life = o.life; p.maxLife = o.life;
+  p.size = o.size || 2.5;
+  p.sprite = SPRITES[o.color || "gold"];
+  p.trail = !!o.trail;
+  p.flash = !!o.flash;
+  p.flicker = o.flicker !== undefined ? o.flicker : true;
+}
+
+// 烟花类型：牡丹 / 金菊 / 垂柳 / 环
+function explode(x, y, kind, small) {
+  let count, speed, colors, life, grav = 0.042;
+  switch (kind) {
+    case "peony":
+      count = small ? 34 : randInt(64, 84);
+      speed = small ? 3.2 : rand(4.4, 6.2);
+      colors = ["red", "gold", "teal", "pink", "white"];
+      life = rand(1.1, 1.6); break;
+    case "chrys":
+      count = small ? 26 : 48;
+      speed = rand(3.6, 5);
+      colors = ["gold", "white", "vermilion"];
+      life = rand(1.3, 1.8); break;
+    case "willow":
+      count = small ? 24 : 46;
+      speed = rand(3.2, 4.4);
+      colors = ["gold", "white"];
+      life = rand(1.8, 2.3); grav = 0.085; break;
+    case "ring":
+      count = 36; speed = 4.8;
+      colors = ["teal", "white", "gold"];
+      life = 1.3; break;
+  }
+  // 闪光
+  spawnParticle({ x, y, life: 0.28, size: small ? 30 : 52, color: "white", grav: 0, drag: 1, flash: true });
+  const col = pick(colors);
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = speed * (kind === "ring" ? rand(0.96, 1.04) : rand(0.35, 1.05));
+    spawnParticle({
+      x, y,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: life * rand(0.7, 1.15),
+      size: rand(1.8, 3.4) * (small ? 0.75 : 1),
+      color: Math.random() < 0.82 ? col : pick(colors),
+      grav, trail: (kind === "chrys" || kind === "willow")
+    });
+  }
+  sfxBurst(small ? 0.5 : 1);
+  checkNodes(x, y);
+  addScore(small ? 5 : 10, x, y);
+}
+
+// ---------- 火箭 ----------
+const rockets = [];
+function launchRocket(tx, ty, small, kind) {
+  rockets.push({
+    x: tx + rand(-26, 26), y: H + 14,
+    tx, ty,
+    vx: rand(-0.6, 0.6), vy: 0,
+    speed: rand(11, 14.5),
+    kind: kind || pick(["peony", "peony", "chrys", "willow", "ring"]),
+    small: !!small
+  });
+  sfxLaunch();
+}
+
+// ---------- 漂浮文字 ----------
+const floatTexts = [];
+function addFloatText(x, y, text, color) {
+  floatTexts.push({ x, y, text, life: 1.2, color: color || "#ffe9b8" });
+}
+
+function addScore(v, x, y) {
+  G.score += v;
+  if (x !== undefined) addFloatText(x, y - 10, "+" + v, v >= 100 ? "#ffcf6e" : "#eaffff");
+  document.getElementById("hud-score").textContent = G.score;
+}
+
+// ---------- 节点判定 ----------
+function checkNodes(bx, by) {
+  for (const n of nodes) {
+    if (n.lit) continue;
+    const sx = wrapX(n.x);
+    if (sx < -150 || sx > W + 150) continue;
+    const ny = n.y - (n.type === "boat" ? 18 : 26);
+    if (Math.hypot(bx - sx, by - ny) < 118) {
+      n.progress++;
+      if (n.progress >= n.need) lightNode(n, sx);
+    }
+  }
+}
+function lightNode(n, sx) {
+  n.lit = true;
+  addScore(100, sx, n.y - 60);
+  addFloatText(sx, n.y - 86, nodeLabel(n.type) + " 已点亮", "#ffcf6e");
+  explodeSilent(sx, n.y - 30);
+  const lit = nodes.filter(v => v.lit).length;
+  document.getElementById("hud-nodes").textContent = lit + "/" + nodes.length;
+  sfxLight();
+  if (lit === nodes.length) startFinale();
+}
+function explodeSilent(x, y) {
+  spawnParticle({ x, y, life: 0.5, size: 70, color: "gold", grav: 0, drag: 1, flash: true });
+  for (let i = 0; i < 30; i++) {
+    const a = Math.random() * Math.PI * 2;
+    spawnParticle({ x, y, vx: Math.cos(a) * rand(1, 3), vy: Math.sin(a) * rand(1, 3), life: rand(0.6, 1.1), size: 2.4, color: "gold", grav: 0.02 });
+  }
+}
+function nodeLabel(t) {
+  return t === "peak" ? "山巅" : t === "pagoda" ? "城楼" : "渔舟";
+}
+function wrapX(x) {
+  let v = x - G.scrollX;
+  v %= SCROLL_W;
+  if (v < -200) v += SCROLL_W;
+  if (v > SCROLL_W - 200) v -= SCROLL_W;
+  return v;
+}
+
+// ---------- 音效（WebAudio 合成，无素材） ----------
+let AC = null, noiseBuf = null;
+function initAudio() {
+  if (AC) return;
+  try {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    noiseBuf = AC.createBuffer(1, AC.sampleRate * 1.2, AC.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  } catch (e) { AC = null; }
+}
+function sfxLaunch() {
+  if (!AC || !G.soundOn) return;
+  const t = AC.currentTime;
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = "sine";
+  o.frequency.setValueAtTime(rand(750, 950), t);
+  o.frequency.exponentialRampToValueAtTime(240, t + 0.55);
+  g.gain.setValueAtTime(0.06, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+  o.connect(g).connect(AC.destination);
+  o.start(t); o.stop(t + 0.6);
+}
+function sfxBurst(size) {
+  if (!AC || !G.soundOn) return;
+  const t = AC.currentTime;
+  const src = AC.createBufferSource();
+  src.buffer = noiseBuf;
+  const f = AC.createBiquadFilter();
+  f.type = "lowpass";
+  f.frequency.setValueAtTime(2600 * size + 500, t);
+  f.frequency.exponentialRampToValueAtTime(180, t + 0.7);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.22 * size, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
+  src.connect(f).connect(g).connect(AC.destination);
+  src.start(t); src.stop(t + 0.8);
+  const o = AC.createOscillator(), og = AC.createGain();
+  o.type = "sine"; o.frequency.setValueAtTime(90, t);
+  o.frequency.exponentialRampToValueAtTime(38, t + 0.4);
+  og.gain.setValueAtTime(0.16 * size, t);
+  og.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+  o.connect(og).connect(AC.destination);
+  o.start(t); o.stop(t + 0.5);
+}
+function sfxLight() {
+  if (!AC || !G.soundOn) return;
+  const t = AC.currentTime;
+  [523, 659, 784].forEach((fq, i) => {
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = "sine"; o.frequency.value = fq;
+    g.gain.setValueAtTime(0.001, t + i * 0.09);
+    g.gain.exponentialRampToValueAtTime(0.09, t + i * 0.09 + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.09 + 0.5);
+    o.connect(g).connect(AC.destination);
+    o.start(t + i * 0.09); o.stop(t + i * 0.09 + 0.55);
+  });
+}
+
+// ---------- 手势追踪 ----------
+const hand = {
+  present: false,
+  tip: { x: W / 2, y: H / 2 },
+  skeleton: null,
+  pose: "none",
+  pendingPose: "none",
+  pendingCount: 0,
+  charge: 0,
+  lastSeen: 0
+};
+let coolPoint = 0, coolOpen = 0;
+const CONN_FALLBACK = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+const CONN = (typeof HAND_CONNECTIONS !== "undefined") ? HAND_CONNECTIONS : CONN_FALLBACK;
+
+function lmDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function analyzePose(lm) {
+  const wrist = lm[0];
+  const idx  = lmDist(lm[8],  wrist) > lmDist(lm[6],  wrist) * 1.12;
+  const mid  = lmDist(lm[12], wrist) > lmDist(lm[10], wrist) * 1.12;
+  const ring = lmDist(lm[16], wrist) > lmDist(lm[14], wrist) * 1.12;
+  const pink = lmDist(lm[20], wrist) > lmDist(lm[18], wrist) * 1.12;
+  const count = [idx, mid, ring, pink].filter(Boolean).length;
+  if (idx && !mid && !ring && !pink) return "point";
+  if (count >= 3) return "open";
+  if (count === 0) return "fist";
+  return "none";
+}
+
+let detectCount = 0, camReady = false, mpHands = null;
+function onHandResults(res) {
+  detectCount++;
+  if (detectCount === 1) toast("手势识别就绪，举起手来 ✋", 1800);
+  if (res.multiHandLandmarks && res.multiHandLandmarks.length) {
+    const lm = res.multiHandLandmarks[0];
+    const tx = (1 - lm[8].x) * W;   // 镜像
+    const ty = lm[8].y * H;
+    hand.tip.x += (tx - hand.tip.x) * 0.45;
+    hand.tip.y += (ty - hand.tip.y) * 0.45;
+    hand.skeleton = lm;
+    hand.present = true;
+    hand.lastSeen = performance.now();
+    const p = analyzePose(lm);
+    if (p === hand.pendingPose) hand.pendingCount++;
+    else { hand.pendingPose = p; hand.pendingCount = 1; }
+    if (hand.pendingCount >= 2) hand.pose = p;
+  } else {
+    hand.present = false;
+    hand.skeleton = null;
+    hand.pose = "none";
+    hand.pendingPose = "none"; hand.pendingCount = 0;
+  }
+}
+
+async function startCamera() {
+  const video = document.getElementById("cam");
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 320, height: 240, facingMode: "user" }, audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    video.style.display = "block";
+    document.getElementById("btn-camtoggle").style.display = "";
+    camReady = true;
+    if (typeof Hands === "undefined") throw new Error("MP_LOAD");
+    mpHands = new Hands({ locateFile: f => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + f });
+    mpHands.setOptions({
+      maxNumHands: 1, modelComplexity: 1,
+      minDetectionConfidence: 0.6, minTrackingConfidence: 0.5
+    });
+    mpHands.onResults(onHandResults);
+    toast("正在加载手势模型，请稍候…", 3000);
+    // 30fps 检测节流
+    const detectLoop = async () => {
+      if (G.mode !== "cam") return;
+      if (video.readyState >= 2) {
+        try { await mpHands.send({ image: video }); } catch (e) { /* 忽略单帧失败 */ }
+      }
+      setTimeout(detectLoop, 33);
+    };
+    detectLoop();
+    setTimeout(() => {
+      if (detectCount === 0) toast("手势模型加载缓慢，可先用鼠标模式体验", 3500);
+    }, 9000);
+    return true;
+  } catch (e) {
+    toast("摄像头不可用或模型加载失败，已切换鼠标模式", 3000);
+    return false;
+  }
+}
+
+// ---------- 鼠标模式 ----------
+const mouse = { down: false, downAt: 0, x: W / 2, y: H / 2, fired: false };
+canvas.addEventListener("mousemove", e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = (e.clientX - r.left) / r.width * W;
+  mouse.y = (e.clientY - r.top) / r.height * H;
+});
+canvas.addEventListener("mousedown", () => { mouse.down = true; mouse.downAt = performance.now(); mouse.fired = false; });
+canvas.addEventListener("mouseup", () => {
+  if (performance.now() - mouse.downAt < 220 && !mouse.fired) {
+    launchRocket(mouse.x, mouse.y, false);
+  }
+  mouse.down = false;
+});
+canvas.addEventListener("dblclick", () => volley(mouse.x, mouse.y));
+window.addEventListener("keydown", e => {
+  if (e.code === "Space" && G.state === "playing") { e.preventDefault(); volley(mouse.x, mouse.y); }
+  if (e.code === "KeyM") toggleSound();
+  if (e.code === "KeyC") toggleCamPreview();
+});
+
+// ---------- 开火逻辑 ----------
+function volley(x, y) {
+  const n = randInt(4, 6);
+  for (let i = 0; i < n; i++) {
+    setTimeout(() => launchRocket(x + rand(-130, 130), y + rand(-70, 70), Math.random() < 0.4), i * 90);
+  }
+}
+
+// ---------- 主循环 ----------
+let lastT = performance.now();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min((now - lastT) / 1000, 0.05);
+  lastT = now;
+  if (G.state === "playing" || G.state === "finale") update(dt, now);
+  draw(now);
+}
+
+function update(dt, now) {
+  if (G.state === "playing") {
+    G.scrollX = (G.scrollX + G.scrollSpeed * dt) % SCROLL_W;
+
+    // ----- 手势驱动 -----
+    let tip = null, pose = "none";
+    if (G.mode === "cam" && hand.present) {
+      tip = hand.tip; pose = hand.pose;
+    } else if (G.mode === "mouse") {
+      tip = { x: mouse.x, y: mouse.y };
+      pose = mouse.down ? "open" : "none";
+    }
+    coolPoint -= dt; coolOpen -= dt;
+
+    if (tip && pose !== "none") {
+      if (pose === "point") {
+        if (coolPoint <= 0) {
+          launchRocket(tip.x, tip.y, false);
+          coolPoint = 0.55;
+        }
+        // 指尖火种
+        if (Math.random() < 0.6) {
+          spawnParticle({ x: tip.x + rand(-3, 3), y: tip.y + rand(-3, 3), vx: rand(-0.5, 0.5), vy: rand(-0.8, -0.2), life: rand(0.3, 0.6), size: rand(1.4, 2.6), color: "gold", grav: -0.005 });
+        }
+      } else if (pose === "open") {
+        if (coolOpen <= 0) {
+          launchRocket(tip.x + rand(-40, 40), tip.y + rand(-25, 25), true, "peony");
+          coolOpen = 0.19;
+        }
+      } else if (pose === "fist") {
+        hand.charge = Math.min(hand.charge + dt, 1.4);
+      }
+    }
+    // 拳头释放 → 齐放
+    if (G.mode === "cam" && hand.pose !== "fist" && hand.charge > 0.3) {
+      volley(hand.tip.x, hand.tip.y);
+      hand.charge = 0;
+    } else if (hand.pose !== "fist") {
+      hand.charge = 0;
+    }
+
+    // 长时间无手提示
+    if (G.mode === "cam" && now - hand.lastSeen > 5000 && Math.floor(now / 900) % 2 === 0) {
+      addFloatText(W / 2, 200, "举起手来 ✋", "#9fd8c8");
+    }
+  }
+
+  // ----- 终章齐放 -----
+  if (G.state === "finale") {
+    G.finaleT -= dt;
+    G.finaleSpawn -= dt;
+    if (G.finaleSpawn <= 0) {
+      launchRocket(rand(100, W - 100), rand(90, 330), Math.random() < 0.5);
+      G.finaleSpawn = 0.14;
+    }
+    if (G.finaleT <= 0) showEnd();
+  }
+
+  // ----- 火箭 -----
+  for (let i = rockets.length - 1; i >= 0; i--) {
+    const r = rockets[i];
+    const dx = r.tx - r.x, dy = r.ty - r.y;
+    const d = Math.hypot(dx, dy);
+    if (d < r.speed * 1.4 || d < 16) {
+      explode(r.tx, r.ty, r.kind, r.small);
+      rockets.splice(i, 1);
+      continue;
+    }
+    r.x += dx / d * r.speed;
+    r.y += dy / d * r.speed;
+    r.speed = Math.min(r.speed + 0.25, 16);
+    // 上升尾迹
+    spawnParticle({ x: r.x + rand(-1.5, 1.5), y: r.y + rand(0, 4), vx: rand(-0.3, 0.3), vy: rand(0.5, 1.4), life: rand(0.25, 0.5), size: rand(1.2, 2.2), color: "gold", grav: 0.01 });
+  }
+
+  // ----- 粒子 -----
+  for (const p of particles) {
+    if (!p.active) continue;
+    p.px = p.x; p.py = p.y;
+    p.x += p.vx; p.y += p.vy;
+    p.vy += p.grav;
+    p.vx *= p.drag; p.vy *= p.drag;
+    p.life -= dt;
+    if (p.life <= 0) p.active = false;
+  }
+
+  // ----- 漂浮文字 -----
+  for (let i = floatTexts.length - 1; i >= 0; i--) {
+    const t = floatTexts[i];
+    t.y -= 26 * dt;
+    t.life -= dt;
+    if (t.life <= 0) floatTexts.splice(i, 1);
+  }
+}
+
+function draw(now) {
+  // 长卷
+  const sx = Math.floor(G.scrollX);
+  ctx.drawImage(scrollCanvas, sx, 0, W, H, 0, 0, W, H);
+  if (sx + W > SCROLL_W) {
+    ctx.drawImage(scrollCanvas, 0, 0, sx + W - SCROLL_W, H, SCROLL_W - sx, 0, sx + W - SCROLL_W, H);
+  }
+
+  // ----- 发光层（加法混合） -----
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+
+  // 点亮节点的暖光
+  for (const n of nodes) {
+    if (!n.lit) continue;
+    const px = wrapX(n.x);
+    if (px < -100 || px > W + 100) continue;
+    const pulse = 0.75 + 0.25 * Math.sin(now / 700 + n.x);
+    const glowY = n.y - (n.type === "boat" ? 14 : 18);
+    ctx.globalAlpha = 0.8 * pulse;
+    ctx.drawImage(SPRITES.gold, px - 40, glowY - 40, 80, 80);
+    ctx.globalAlpha = 1;
+    ctx.drawImage(SPRITES.white, px - 7, glowY - 7, 14, 14);
+    if (Math.random() < 0.05) {
+      spawnParticle({ x: px + rand(-8, 8), y: glowY, vx: rand(-0.3, 0.3), vy: rand(-0.6, -0.2), life: rand(0.5, 1), size: 1.8, color: "gold", grav: -0.008 });
+    }
+  }
+
+  // 粒子
+  for (const p of particles) {
+    if (!p.active) continue;
+    let a = clamp(p.life / p.maxLife, 0, 1);
+    if (p.flicker && p.life < p.maxLife * 0.4 && Math.random() < 0.35) a *= 0.35;
+    ctx.globalAlpha = a;
+    if (p.flash) {
+      const s = p.size * (1 + (1 - a) * 1.6);
+      ctx.drawImage(p.sprite, p.x - s, p.y - s, s * 2, s * 2);
+    } else if (p.trail) {
+      ctx.strokeStyle = p.sprite === SPRITES.gold ? "rgba(255,207,110," + (0.5 * a).toFixed(2) + ")" : "rgba(234,255,255," + (0.4 * a).toFixed(2) + ")";
+      ctx.lineWidth = p.size * 0.7;
+      ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(p.x, p.y); ctx.stroke();
+      ctx.drawImage(p.sprite, p.x - p.size * 2, p.y - p.size * 2, p.size * 4, p.size * 4);
+    } else {
+      const s = p.size * 2.6;
+      ctx.drawImage(p.sprite, p.x - s, p.y - s, s * 2, s * 2);
+    }
+  }
+  ctx.restore();
+
+  // ----- 未点亮节点标记（进度环） -----
+  ctx.save();
+  for (const n of nodes) {
+    if (n.lit) continue;
+    const px = wrapX(n.x);
+    if (px < -80 || px > W + 80) continue;
+    const my = n.y - (n.type === "boat" ? 18 : 30);
+    const pulse = 0.55 + 0.45 * Math.sin(now / 500 + n.x * 0.01);
+    ctx.globalAlpha = 0.5 + 0.4 * pulse;
+    ctx.strokeStyle = "#ffe9b8";
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([4, 5]);
+    ctx.beginPath();
+    ctx.arc(px, my - 34, 13 + pulse * 2.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 进度弧
+    if (n.progress > 0) {
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = "#ffcf6e";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(px, my - 34, 13, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (n.progress / n.need));
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 0.85 * pulse;
+    ctx.drawImage(SPRITES.gold, px - 8, my - 42, 16, 16);
+  }
+  ctx.restore();
+
+  // ----- 手骨架（金色） -----
+  if (G.mode === "cam" && hand.skeleton) {
+    const lm = hand.skeleton;
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 200, 100, 0.55)";
+    ctx.lineWidth = 2;
+    for (const c of CONN) {
+      const a = lm[c[0]], b = lm[c[1]];
+      ctx.beginPath();
+      ctx.moveTo((1 - a.x) * W, a.y * H);
+      ctx.lineTo((1 - b.x) * W, b.y * H);
+      ctx.stroke();
+    }
+    for (const p of lm) {
+      ctx.fillStyle = "rgba(255, 230, 170, 0.85)";
+      ctx.beginPath();
+      ctx.arc((1 - p.x) * W, p.y * H, 2.6, 0, 7);
+      ctx.fill();
+    }
+    // 指尖光标
+    ctx.globalCompositeOperation = "lighter";
+    ctx.drawImage(SPRITES.gold, hand.tip.x - 16, hand.tip.y - 16, 32, 32);
+    ctx.drawImage(SPRITES.white, hand.tip.x - 5, hand.tip.y - 5, 10, 10);
+    // 蓄力环
+    if (hand.charge > 0.05) {
+      ctx.strokeStyle = "#ffcf6e";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(hand.tip.x, hand.tip.y, 24 + hand.charge * 22, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (hand.charge / 1.4));
+      ctx.stroke();
+    }
+    ctx.restore();
+  } else if (G.mode === "mouse" && G.state === "playing") {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.drawImage(SPRITES.gold, mouse.x - 16, mouse.y - 16, 32, 32);
+    ctx.drawImage(SPRITES.white, mouse.x - 5, mouse.y - 5, 10, 10);
+    ctx.restore();
+  }
+
+  // ----- 漂浮文字 -----
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.font = "17px 'Noto Serif SC', 'Songti SC', serif";
+  for (const t of floatTexts) {
+    ctx.globalAlpha = clamp(t.life / 1.2, 0, 1);
+    ctx.fillStyle = t.color;
+    ctx.shadowColor = "rgba(0,0,0,0.8)";
+    ctx.shadowBlur = 6;
+    ctx.fillText(t.text, t.x, t.y);
+  }
+  ctx.restore();
+
+  // ----- 手势状态 HUD -----
+  const poseEl = document.getElementById("hud-pose");
+  const poseName = G.mode === "cam"
+    ? (hand.present ? ({ point: "指点 · 单发", open: "张掌 · 连放", fist: "握拳 · 蓄力", none: "待势" })[hand.pose] : "未检测到手")
+    : (mouse.down ? "按住 · 连放" : "移动瞄准");
+  if (poseEl.textContent !== "手势：" + poseName) poseEl.textContent = "手势：" + poseName;
+}
+
+// ---------- 终章与结算 ----------
+function startFinale() {
+  G.state = "finale";
+  G.finaleT = 4.5;
+  G.finaleSpawn = 0;
+  toast("千里江山 · 已全卷点亮 🎆", 2600);
+}
+function showEnd() {
+  G.state = "end";
+  const el = document.getElementById("endscreen");
+  document.getElementById("end-score").textContent = G.score;
+  const s = Math.floor((performance.now() - G.startTime) / 1000);
+  document.getElementById("end-time").textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  el.classList.remove("hidden");
+}
+
+// ---------- 流程控制 ----------
+function resetGame() {
+  nodes = NODE_DEFS.map(d => ({
+    ...d,
+    y: d.type === "peak" ? getNearY(d.x) + 4 : d.type === "pagoda" ? 652 : 682,
+    progress: 0, lit: false
+  }));
+  for (const p of particles) p.active = false;
+  rockets.length = 0;
+  floatTexts.length = 0;
+  G.score = 0;
+  G.scrollX = 0;
+  document.getElementById("hud-score").textContent = "0";
+  document.getElementById("hud-nodes").textContent = "0/" + nodes.length;
+  paintScroll();
+}
+
+function startPlay(mode) {
+  initAudio();
+  if (mode === "cam") {
+    startCamera().then(ok => { G.mode = ok ? "cam" : "mouse"; });
+  } else {
+    G.mode = "mouse";
+  }
+  resetGame();
+  G.state = "playing";
+  G.startTime = performance.now();
+  document.getElementById("menu").classList.add("hidden");
+  document.getElementById("endscreen").classList.add("hidden");
+}
+
+document.getElementById("btn-cam").addEventListener("click", () => startPlay("cam"));
+document.getElementById("btn-mouse").addEventListener("click", () => startPlay("mouse"));
+document.getElementById("btn-replay").addEventListener("click", () => startPlay(G.mode || "cam"));
+document.getElementById("btn-menu").addEventListener("click", () => {
+  G.state = "menu";
+  document.getElementById("endscreen").classList.add("hidden");
+  document.getElementById("menu").classList.remove("hidden");
+});
+
+function toggleSound() {
+  G.soundOn = !G.soundOn;
+  document.getElementById("btn-sound").textContent = "音效：" + (G.soundOn ? "开" : "关");
+}
+function toggleCamPreview() {
+  const v = document.getElementById("cam");
+  if (v.style.display === "none") v.style.display = "block";
+  else v.style.display = "none";
+}
+document.getElementById("btn-sound").addEventListener("click", toggleSound);
+document.getElementById("btn-camtoggle").addEventListener("click", toggleCamPreview);
+
+// ---------- Toast ----------
+let toastTimer = null;
+function toast(msg, ms) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.style.opacity = 1;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.opacity = 0; }, ms || 2000);
+}
+
+// ---------- 启动 ----------
+resetGame();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
