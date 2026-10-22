@@ -161,6 +161,7 @@
 
   <div id="corner-btns">
     <button id="btn-sound" title="快捷键 M">音效：开</button>
+    <button id="btn-music" title="快捷键 B">古乐：开</button>
     <button id="btn-camtoggle" title="快捷键 C" style="display:none">预览：开</button>
   </div>
 
@@ -179,7 +180,8 @@
     </div>
     <div class="tips">
       手势：伸出食指 = 单发烟花 ｜ 张开手掌 = 连放 ｜ 握拳蓄力再松开 = 齐放<br>
-      鼠标模式：移动 = 瞄准 ｜ 单击 = 单发 ｜ 按住 = 连放 ｜ 双击 / 空格 = 齐放
+      鼠标模式：移动 = 瞄准 ｜ 单击 = 单发 ｜ 按住 = 连放 ｜ 双击 / 空格 = 齐放<br>
+      按键：M 音效 ｜ B 古乐 ｜ C 摄像头预览
     </div>
   </div>
 
@@ -219,7 +221,8 @@ const G = {
   startTime: 0,
   finaleT: 0,
   finaleSpawn: 0,
-  soundOn: true
+  soundOn: true,
+  musicOn: true
 };
 
 // ---------- 工具 ----------
@@ -616,7 +619,7 @@ function wrapX(x) {
   return v;
 }
 
-// ---------- 音效（WebAudio 合成，无素材） ----------
+// ---------- 音效与古乐（WebAudio 合成，无素材） ----------
 let AC = null, noiseBuf = null;
 function initAudio() {
   if (AC) return;
@@ -625,18 +628,21 @@ function initAudio() {
     noiseBuf = AC.createBuffer(1, AC.sampleRate * 1.2, AC.sampleRate);
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    ensureMusicChain();
+    music.nextTime = AC.currentTime + 0.8;         // 稍候开弹，留一分静气
+    setInterval(scheduleMusic, 120);                // 前瞻式乐句调度
   } catch (e) { AC = null; }
 }
 function sfxLaunch() {
   if (!AC || !G.soundOn) return;
   const t = AC.currentTime;
   const o = AC.createOscillator(), g = AC.createGain();
-  o.type = "sine";
-  o.frequency.setValueAtTime(rand(750, 950), t);
-  o.frequency.exponentialRampToValueAtTime(240, t + 0.55);
-  g.gain.setValueAtTime(0.06, t);
+  o.type = "triangle";                             // 竹笛气声感
+  o.frequency.setValueAtTime(rand(560, 700), t);
+  o.frequency.exponentialRampToValueAtTime(180, t + 0.55);
+  g.gain.setValueAtTime(0.045, t);
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
-  o.connect(g).connect(AC.destination);
+  o.connect(g).connect(musicBus || AC.destination);
   o.start(t); o.stop(t + 0.6);
 }
 function sfxBurst(size) {
@@ -649,29 +655,157 @@ function sfxBurst(size) {
   f.frequency.setValueAtTime(2600 * size + 500, t);
   f.frequency.exponentialRampToValueAtTime(180, t + 0.7);
   const g = AC.createGain();
-  g.gain.setValueAtTime(0.22 * size, t);
+  g.gain.setValueAtTime(0.18 * size, t);
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
   src.connect(f).connect(g).connect(AC.destination);
   src.start(t); src.stop(t + 0.8);
   const o = AC.createOscillator(), og = AC.createGain();
   o.type = "sine"; o.frequency.setValueAtTime(90, t);
   o.frequency.exponentialRampToValueAtTime(38, t + 0.4);
-  og.gain.setValueAtTime(0.16 * size, t);
+  og.gain.setValueAtTime(0.13 * size, t);
   og.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
   o.connect(og).connect(AC.destination);
   o.start(t); o.stop(t + 0.5);
+  // 烟花即兴曲：每次爆开在五声音阶上随手拨一弦
+  pluck(randInt(6, SCALE.length - 1), t + 0.04, size >= 0.9 ? 0.32 : 0.16, 2.2);
 }
 function sfxLight() {
   if (!AC || !G.soundOn) return;
   const t = AC.currentTime;
-  [523, 659, 784].forEach((fq, i) => {
+  // 古筝琶音上行 + 一记云锣
+  const base = randInt(2, 5);
+  [0, 2, 4].forEach((s, i) => pluck(base + s, t + i * 0.11, 0.5 - i * 0.08, 2.6));
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = "sine"; o.frequency.value = 1174.66;    // 高音 D（宫）
+  g.gain.setValueAtTime(0.001, t + 0.3);
+  g.gain.exponentialRampToValueAtTime(0.06, t + 0.33);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+  o.connect(g).connect(musicBus || AC.destination);
+  o.start(t + 0.3); o.stop(t + 1.5);
+}
+
+// ---------- 古乐引擎（D 宫五声 · Karplus-Strong 拨弦 · 山谷混响） ----------
+// 宫 商 角 徵 羽 × 近三个八度（D 宫调：D E F# A B）
+const SCALE = [146.83, 164.81, 185.00, 220.00, 246.94,
+               293.66, 329.63, 369.99, 440.00, 493.88,
+               587.33, 659.25, 739.99];
+const ksCache = new Map();
+function ksBuffer(freq) {                            // Karplus-Strong 拨弦波形
+  const key = Math.round(freq * 10);
+  if (ksCache.has(key)) return ksCache.get(key);
+  const sr = AC.sampleRate;
+  const dur = Math.min(3.2, 6 / freq + 1.2);
+  const n = Math.floor(sr * dur);
+  const buf = AC.createBuffer(1, n, sr);
+  const d = buf.getChannelData(0);
+  const N = Math.round(sr / freq);
+  let last = 0;
+  for (let i = 0; i < N; i++) {                      // 柔化激励（筝的指触）
+    const w = Math.random() * 2 - 1;
+    last = last * 0.55 + w * 0.45;
+    d[i] = last;
+  }
+  for (let i = N; i < n; i++)                        // 延迟线递推：弦振动
+    d[i] = (d[i - N] + d[i - N - 1]) * 0.5 * 0.996;
+  let peak = 0;
+  for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(d[i]));
+  const k = peak > 0 ? 0.9 / peak : 1;
+  for (let i = 0; i < n; i++) d[i] *= k;
+  const fade = Math.min(2048, n >> 2);
+  for (let i = 0; i < fade; i++) d[n - 1 - i] *= i / fade;
+  ksCache.set(key, buf);
+  return buf;
+}
+let musicBus = null;
+function ensureMusicChain() {                        // 干声 + 山谷混响
+  if (musicBus || !AC) return;
+  const sr = AC.sampleRate, len = Math.floor(sr * 2.6);
+  const ir = AC.createBuffer(2, len, sr);
+  for (let c = 0; c < 2; c++) {
+    const ch = ir.getChannelData(c);
+    for (let i = 0; i < len; i++)
+      ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.4);
+  }
+  const conv = AC.createConvolver(); conv.buffer = ir;
+  const wet = AC.createGain(); wet.gain.value = 0.5;
+  musicBus = AC.createGain(); musicBus.gain.value = 0.95;
+  musicBus.connect(AC.destination);
+  musicBus.connect(conv); conv.connect(wet); wet.connect(AC.destination);
+}
+function pluck(idx, when, vel = 1, dur = 3.2) {      // 拨一弦（SCALE 下标）
+  if (!AC || !G.musicOn) return;
+  const f = SCALE[clamp(idx, 0, SCALE.length - 1)];
+  const src = AC.createBufferSource(); src.buffer = ksBuffer(f);
+  const g = AC.createGain();
+  const st = Math.max(when, AC.currentTime + 0.01);
+  g.gain.setValueAtTime(0.24 * vel, st);
+  g.gain.exponentialRampToValueAtTime(0.0001, st + dur);
+  src.connect(g).connect(musicBus || AC.destination);
+  src.start(st); src.stop(st + dur + 0.05);
+}
+function litRatio() {                                // 点亮进度 0~1，音乐随它生长
+  return nodes.length ? nodes.filter(nd => nd.lit).length / nodes.length : 0;
+}
+const music = { nextTime: 0, phrase: [], lastIdx: 5 };
+function genPhrase() {                               // 级进为主的宫调即兴乐句
+  const len = randInt(5, 9);
+  const phrase = [];
+  let idx = clamp(music.lastIdx + randInt(-3, 3), 1, SCALE.length - 2);
+  for (let i = 0; i < len; i++) {
+    phrase.push(idx);
+    const r = Math.random();
+    let step = 0;
+    if (r < 0.62) step = pick([-1, 0, 1]);
+    else if (r < 0.88) step = pick([-2, 2, -3, 3]);
+    else step = pick([-5, -4, 4, 5, 6]);             // 四五度大跳
+    idx = clamp(idx + step, 0, SCALE.length - 1);
+  }
+  music.lastIdx = idx;
+  return phrase;
+}
+function scheduleMusic() {                           // 前瞻调度：静→疏→密
+  if (!AC || !G.musicOn) return;
+  const r = litRatio();
+  const beat = 60 / (52 + 22 * r);                   // 点亮越多，曲速渐快
+  const lookahead = AC.currentTime + 0.45;
+  while (music.nextTime < lookahead) {
+    if (!music.phrase.length) {                      // 句间呼吸（起先留白多）
+      music.nextTime += beat * rand(1.4, 2.8) * (1 - 0.5 * r);
+      music.phrase = genPhrase();
+    }
+    const idx = music.phrase.shift();
+    const t = music.nextTime;
+    pluck(idx, t, 0.75 + r * 0.25);
+    if (r > 0.35 && Math.random() < 0.3)             // 低八度和声
+      pluck(idx >= 5 ? idx - 5 : idx, t, 0.38);
+    if (r > 0.8 && Math.random() < 0.35)             // 欢庆装饰音
+      pluck(Math.min(idx + 2, SCALE.length - 1), t + beat * 0.5, 0.28);
+    music.nextTime += beat * pick([0.5, 0.75, 1, 1, 1.5, 2]);
+  }
+}
+function glissando(up = true, vel = 0.5) {           // 古筝刮奏（齐放触发）
+  if (!AC || !G.musicOn) return;
+  const t0 = AC.currentTime + 0.02;
+  const n = randInt(6, 8);
+  const start = up ? randInt(0, 4) : randInt(SCALE.length - 5, SCALE.length - 1);
+  for (let i = 0; i < n; i++) {
+    const idx = up ? start + i : start - i;
+    if (idx < 0 || idx >= SCALE.length) break;
+    pluck(idx, t0 + i * 0.055, vel * (0.6 + 0.5 * i / n), 1.5);
+  }
+}
+function sfxGong() {                                 // 大锣（终章）
+  if (!AC || !G.soundOn) return;
+  const t = AC.currentTime;
+  [73.4, 110.0, 146.8, 196.0].forEach((fq, i) => {
     const o = AC.createOscillator(), g = AC.createGain();
     o.type = "sine"; o.frequency.value = fq;
-    g.gain.setValueAtTime(0.001, t + i * 0.09);
-    g.gain.exponentialRampToValueAtTime(0.09, t + i * 0.09 + 0.03);
-    g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.09 + 0.5);
-    o.connect(g).connect(AC.destination);
-    o.start(t + i * 0.09); o.stop(t + i * 0.09 + 0.55);
+    o.frequency.linearRampToValueAtTime(fq * 0.985, t + 3);
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.13 / (i + 1), t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 3.6);
+    o.connect(g).connect(musicBus || AC.destination);
+    o.start(t); o.stop(t + 3.8);
   });
 }
 
@@ -829,11 +963,13 @@ canvas.addEventListener("dblclick", () => volley(mouse.x, mouse.y));
 window.addEventListener("keydown", e => {
   if (e.code === "Space" && G.state === "playing") { e.preventDefault(); volley(mouse.x, mouse.y); }
   if (e.code === "KeyM") toggleSound();
+  if (e.code === "KeyB") toggleMusic();
   if (e.code === "KeyC") toggleCamPreview();
 });
 
 // ---------- 开火逻辑 ----------
 function volley(x, y) {
+  glissando(true, 0.55);                             // 齐放起手：古筝上刮
   const n = randInt(4, 6);
   for (let i = 0; i < n; i++) {
     setTimeout(() => launchRocket(x + rand(-130, 130), y + rand(-70, 70), Math.random() < 0.4), i * 90);
@@ -1095,6 +1231,9 @@ function startFinale() {
   G.state = "finale";
   G.finaleT = 4.5;
   G.finaleSpawn = 0;
+  sfxGong();
+  glissando(true, 0.7);
+  setTimeout(() => glissando(false, 0.5), 900);      // 锣开道，双向刮奏迎终章
   toast("千里江山 · 已全卷点亮 🎆", 2600);
 }
 function showEnd() {
@@ -1154,12 +1293,21 @@ function toggleSound() {
   G.soundOn = !G.soundOn;
   document.getElementById("btn-sound").textContent = "音效：" + (G.soundOn ? "开" : "关");
 }
+function toggleMusic() {
+  G.musicOn = !G.musicOn;
+  document.getElementById("btn-music").textContent = "古乐：" + (G.musicOn ? "开" : "关");
+  if (G.musicOn && AC) {                             // 重新起句
+    music.phrase.length = 0;
+    music.nextTime = AC.currentTime + 0.2;
+  }
+}
 function toggleCamPreview() {
   const v = document.getElementById("cam");
   if (v.style.display === "none") v.style.display = "block";
   else v.style.display = "none";
 }
 document.getElementById("btn-sound").addEventListener("click", toggleSound);
+document.getElementById("btn-music").addEventListener("click", toggleMusic);
 document.getElementById("btn-camtoggle").addEventListener("click", toggleCamPreview);
 
 // ---------- Toast ----------
