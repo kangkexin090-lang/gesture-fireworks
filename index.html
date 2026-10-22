@@ -704,7 +704,7 @@ function analyzePose(lm) {
   return "none";
 }
 
-let detectCount = 0, camReady = false, mpHands = null;
+let detectCount = 0, camReady = false, mpHands = null, camActive = false;
 function onHandResults(res) {
   detectCount++;
   if (detectCount === 1) toast("手势识别就绪，举起手来 ✋", 1800);
@@ -729,8 +729,38 @@ function onHandResults(res) {
   }
 }
 
+// MediaPipe 脚本多源回退（jsDelivr / Fastly / unpkg），避免单一 CDN 被墙或超时
+let MP_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/hands/";
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.crossOrigin = "anonymous";
+    s.onload = () => resolve(true);
+    s.onerror = () => reject(new Error("script load failed: " + src));
+    document.head.appendChild(s);
+  });
+}
+async function ensureHands() {
+  if (typeof Hands !== "undefined") return true;
+  const bases = [
+    "https://cdn.jsdelivr.net/npm/@mediapipe/hands/",
+    "https://fastly.jsdelivr.net/npm/@mediapipe/hands/",
+    "https://unpkg.com/@mediapipe/hands/"
+  ];
+  for (const b of bases) {
+    try {
+      await loadScript(b + "hands.js");
+      await new Promise(r => setTimeout(r, 400));
+      if (typeof Hands !== "undefined") { MP_BASE = b; return true; }
+    } catch (e) { /* 换下一个源 */ }
+  }
+  return false;
+}
+
 async function startCamera() {
   const video = document.getElementById("cam");
+  camActive = false;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { width: 320, height: 240, facingMode: "user" }, audio: false
@@ -740,29 +770,43 @@ async function startCamera() {
     video.style.display = "block";
     document.getElementById("btn-camtoggle").style.display = "";
     camReady = true;
-    if (typeof Hands === "undefined") throw new Error("MP_LOAD");
-    mpHands = new Hands({ locateFile: f => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + f });
-    mpHands.setOptions({
-      maxNumHands: 1, modelComplexity: 1,
-      minDetectionConfidence: 0.6, minTrackingConfidence: 0.5
-    });
-    mpHands.onResults(onHandResults);
+    if (!(await ensureHands())) throw new Error("MP_LOAD");
+
+    if (!mpHands) {
+      mpHands = new Hands({ locateFile: f => MP_BASE + f });
+      mpHands.setOptions({
+        maxNumHands: 1, modelComplexity: 0,
+        minDetectionConfidence: 0.5, minTrackingConfidence: 0.5
+      });
+      mpHands.onResults(onHandResults);
+    }
     toast("正在加载手势模型，请稍候…", 3000);
-    // 30fps 检测节流
+
+    // 30fps 检测节流（用独立开关控制，不再依赖异步赋值的 G.mode）
+    camActive = true;
     const detectLoop = async () => {
-      if (G.mode !== "cam") return;
-      if (video.readyState >= 2) {
+      if (!camActive) return;
+      if (video.readyState >= 2 && video.videoWidth > 0) {
         try { await mpHands.send({ image: video }); } catch (e) { /* 忽略单帧失败 */ }
       }
       setTimeout(detectLoop, 33);
     };
     detectLoop();
+
+    // 看门狗：模型始终没返回则自动降级为鼠标模式，保证还能玩
     setTimeout(() => {
-      if (detectCount === 0) toast("手势模型加载缓慢，可先用鼠标模式体验", 3500);
-    }, 9000);
+      if (camActive && detectCount === 0) {
+        camActive = false;
+        G.mode = "mouse";
+        toast("手势模型未加载成功（多为网络问题），已切换鼠标模式", 4000);
+      }
+    }, 10000);
     return true;
   } catch (e) {
-    toast("摄像头不可用或模型加载失败，已切换鼠标模式", 3000);
+    camActive = false;
+    toast(e && e.message === "MP_LOAD"
+      ? "手势模型 CDN 全部加载失败（网络受限），已切换鼠标模式"
+      : "摄像头不可用，已切换鼠标模式", 3500);
     return false;
   }
 }
@@ -1035,9 +1079,14 @@ function draw(now) {
 
   // ----- 手势状态 HUD -----
   const poseEl = document.getElementById("hud-pose");
-  const poseName = G.mode === "cam"
-    ? (hand.present ? ({ point: "指点 · 单发", open: "张掌 · 连放", fist: "握拳 · 蓄力", none: "待势" })[hand.pose] : "未检测到手")
-    : (mouse.down ? "按住 · 连放" : "移动瞄准");
+  let poseName;
+  if (G.mode === "cam") {
+    if (detectCount === 0) poseName = "模型加载中…";
+    else if (!hand.present) poseName = "未检测到手";
+    else poseName = ({ point: "指点 · 单发", open: "张掌 · 连放", fist: "握拳 · 蓄力", none: "待势" })[hand.pose];
+  } else {
+    poseName = mouse.down ? "按住 · 连放" : "移动瞄准";
+  }
   if (poseEl.textContent !== "手势：" + poseName) poseEl.textContent = "手势：" + poseName;
 }
 
@@ -1076,10 +1125,13 @@ function resetGame() {
 
 function startPlay(mode) {
   initAudio();
+  G.mode = mode;                    // 同步赋值，检测循环启动时不会再读到 null
   if (mode === "cam") {
-    startCamera().then(ok => { G.mode = ok ? "cam" : "mouse"; });
+    startCamera().then(ok => {
+      if (!ok) G.mode = "mouse";
+    });
   } else {
-    G.mode = "mouse";
+    camActive = false;
   }
   resetGame();
   G.state = "playing";
@@ -1093,6 +1145,7 @@ document.getElementById("btn-mouse").addEventListener("click", () => startPlay("
 document.getElementById("btn-replay").addEventListener("click", () => startPlay(G.mode || "cam"));
 document.getElementById("btn-menu").addEventListener("click", () => {
   G.state = "menu";
+  camActive = false;
   document.getElementById("endscreen").classList.add("hidden");
   document.getElementById("menu").classList.remove("hidden");
 });
