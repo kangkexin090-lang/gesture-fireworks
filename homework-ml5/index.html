@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>千里江山 · 烟花 ｜ ml5.js HandPose</title>
+<link rel="stylesheet" href="style.css">
+
+<!-- ml5.js（已包含 TensorFlow.js，无需单独引入） -->
+<script src="https://unpkg.com/ml5@1/dist/ml5.min.js"></script>
+<script>
+  // 国内 unpkg 偶发抽风，自动换 jsdelivr
+  if (typeof ml5 === "undefined") {
+    document.write('<script src="https://cdn.jsdelivr.net/npm/ml5@1/dist/ml5.min.js"><\/script>');
+  }
+</script>
+
+<!-- p5.js：OpenProcessing 已内置会自动跳过；本地双击打开时动态补载（三级 CDN 回退） -->
+<script>
+  if (typeof p5 === "undefined") {
+    document.write('<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"><\/script>');
+  }
+</script>
+<script>
+  if (typeof p5 === "undefined") {
+    document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"><\/script>');
+  }
+</script>
+<script>
+  if (typeof p5 === "undefined") {
+    document.write('<script src="https://unpkg.com/p5@1.9.4/lib/p5.min.js"><\/script>');
+  }
+</script>
+</head>
+
+<body>
+
+<!-- ▼▼▼ 粘贴到 OpenProcessing 时，只需要 <body> 里的这些标签 ▼▼▼ -->
+
+<div id="sketch-holder"></div>
+
+<!-- 摄像头预览（自拍镜像） -->
+<video id="cam" playsinline autoplay muted></video>
+
+<!-- 左上角信息面板 -->
+<div id="hud">
+  <div class="hud-title">千里江山 · 烟花</div>
+  <div class="hud-row"><span id="st-mode">摄像头模式</span></div>
+  <div class="hud-row"><span id="st-pose">初始化…</span></div>
+  <div class="hud-row dim"><span id="st-lit">江山 0 / 12</span><span id="st-score">0 分</span></div>
+</div>
+
+<!-- 右上角控制条 -->
+<div id="ctrl">
+  <button id="b-clear">清屏</button>
+  <button id="b-save">存图</button>
+  <button id="b-skel">骨架：开</button>
+  <button id="b-camv">预览：开</button>
+  <button id="b-mouse">鼠标模式</button>
+</div>
+
+<!-- 底部提示 -->
+<div id="tip">
+  <b>手势</b> 伸食指 = 单发 ｜ 张掌 = 连放 ｜ 握拳蓄力后松开 = 齐放
+  ｜ <b>鼠标</b> 单击 = 单发 ｜ 按住 = 连放 ｜ 空格 = 齐放
+</div>
+
+<!-- 加载遮罩 -->
+<div id="boot">
+  <div class="boot-in">
+    <div class="boot-title">千里江山 · 烟花</div>
+    <div class="boot-sub" id="boot-sub">正在启动摄像头…</div>
+    <div class="boot-hint">浏览器若询问摄像头权限，请点「允许」</div>
+  </div>
+</div>
+
+<script src="sketch.js"></script>
+</body>
+</html>

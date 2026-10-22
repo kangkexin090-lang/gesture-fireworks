@@ -44,11 +44,35 @@
 - **烟花形态**：牡丹 / 金菊 / 垂柳 / 环 四种爆形，红金青粉配色
 - **性能**：摄像头以 320×240 低分辨率采集，手势检测节流至 30fps，渲染与识别解耦
 
+## 课程作业版（ml5.js HandPose）
+
+`homework-ml5/` 是同一主题的**作业实现**，按课程要求拆成三个文件、改用 `ml5.js` 的 HandPose 模型：
+
+```
+homework-ml5/
+├── index.html   # 结构 + CDN 引入（ml5.js / p5.js 均带多级回退）
+├── style.css    # 青绿山水配色的 HUD、按钮、摄像头小窗
+└── sketch.js    # ml5.handPose 手势识别 + 烟花粒子 + 千里江山背景
+```
+
+与根目录单文件版的区别：
+
+| | 根目录 `index.html` | `homework-ml5/` |
+| --- | --- | --- |
+| 手势库 | MediaPipe Hands | **ml5.js handPose** |
+| 渲染 | 原生 Canvas 2D | p5.js（双层 Graphics） |
+| 文件 | 单文件 | HTML / CSS / JS 三文件 |
+| 音效 | WebAudio 古乐系统 | 无（作业聚焦视觉与交互） |
+| 玩法 | 横向长卷滚动 | 全屏夜色山水 + 12 座山巅亭台节点 |
+
+三个文件可直接粘进 [OpenProcessing](https://openprocessing.org) 编辑器（HTML / CSS / JS 三栏）。
+
 ## 项目结构
 
 ```
 fireworks-game/
 ├── index.html        # 单文件游戏，包含全部逻辑
+├── homework-ml5/     # 课程作业版：ml5.js + p5.js 三文件
 ├── README.md
 ├── .gitignore
 └── preview/          # AI 生成的效果图

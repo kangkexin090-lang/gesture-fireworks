@@ -622,7 +622,7 @@ function wrapX(x) {
 // ---------- 音效与古乐（WebAudio 合成，无素材） ----------
 let AC = null, noiseBuf = null;
 function initAudio() {
-  if (AC) return;
+  if (AC) { wakeAudio(); return; }
   try {
     AC = new (window.AudioContext || window.webkitAudioContext)();
     noiseBuf = AC.createBuffer(1, AC.sampleRate * 1.2, AC.sampleRate);
@@ -631,8 +631,18 @@ function initAudio() {
     ensureMusicChain();
     music.nextTime = AC.currentTime + 0.8;         // 稍候开弹，留一分静气
     setInterval(scheduleMusic, 120);                // 前瞻式乐句调度
+    wakeAudio();
   } catch (e) { AC = null; }
 }
+function wakeAudio() {                              // 浏览器自动播放策略：必须显式唤醒
+  if (!AC) return;
+  if (AC.state === "suspended") AC.resume().catch(() => {});
+  // 上下文被浏览器时钟暂停过后，调度起点可能落在过去，重置一下
+  if (music.nextTime < AC.currentTime) music.nextTime = AC.currentTime + 0.3;
+}
+// 任何一次页面交互都尝试唤醒（覆盖「先开页面后点开始」等时序）
+["pointerdown", "keydown"].forEach(ev =>
+  window.addEventListener(ev, wakeAudio, { passive: true }));
 function sfxLaunch() {
   if (!AC || !G.soundOn) return;
   const t = AC.currentTime;
@@ -1262,8 +1272,17 @@ function resetGame() {
   paintScroll();
 }
 
+function musicOverture() {                           // 开局起手：宫-角-徵-高宫
+  if (!AC || !G.musicOn) return;
+  const t = AC.currentTime + 0.15;
+  [[0, 0, 0.55], [2, 0.4, 0.5], [4, 0.8, 0.5], [7, 1.3, 0.62]].forEach(([idx, dt, vel]) =>
+    pluck(idx, t + dt, vel, 3.2));
+}
 function startPlay(mode) {
   initAudio();
+  wakeAudio();
+  if (AC && AC.state === "running") musicOverture();
+  else if (AC) toast("浏览器拦住了声音：点击一下页面任意处即可出声", 3500);
   G.mode = mode;                    // 同步赋值，检测循环启动时不会再读到 null
   if (mode === "cam") {
     startCamera().then(ok => {
